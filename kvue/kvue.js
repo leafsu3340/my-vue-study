@@ -57,7 +57,10 @@ class KVue {
 
     observe(this.$data);
 
-    new Compile(options.el, this);
+    // 调用$mount
+    if (options.el) {
+      this.$mount(options.el);
+    }
   }
 
   proxy(vm) {
@@ -72,144 +75,149 @@ class KVue {
       });
     });
   }
-}
 
-class Compile {
-  constructor(el, vm) {
-    this.$vm = vm;
-
+  $mount(el) {
     this.$el = document.querySelector(el);
-    if (this.$el) {
-      this.compile(this.$el);
+    // 1.创建组件更新函数
+    const updateComponent = () => {
+      const { render } = this.$options;
+      // vdom版本
+      // 2.由render得到vnode
+      const vnode = render.call(this, this.$createElement);
+      // 3.执行__patch__  diff vnode -> 更新dom
+      this._update(vnode);
+    };
+    // 4.watcher.update函数重新patch下，重新刷新页面
+    new Watcher(this, updateComponent); // 关心服务组件是谁，更新函数
+  }
+
+  $createElement(tag, props, children) {
+    return { tag, props, children };
+  }
+
+  _update(vnode) {
+    const preVnode = this._vnode;
+    if (!preVnode) {
+      // init
+      this.__patch__(this.$el, vnode);
+    } else {
+      this.__patch__(preVnode, vnode);
     }
   }
 
-  compile(el) {
-    // 递归遍历
-    el.childNodes.forEach((node) => {
-      if (node.nodeType == 1) {
-        // 元素节点
-        this.compileElement(node);
-        // 递归  注意此处需要递归
-        if (node.childNodes.length > 0) {
-          this.compile(node);
+  __patch__(oldVnode, vnode) {
+    if (oldVnode.nodeType) {
+      const parent = oldVnode.parentElement;
+      const refElm = oldVnode.nextSibling;
+      // 递归创建真实dom
+      const el = this.createElm(vnode);
+      parent.insertBefore(el, refElm);
+      parent.removeChild(oldVnode);
+    } else {
+      // update
+      // 1.获取要更新的el
+      const el = (vnode.el = oldVnode.el);
+      // 2.props update
+      // 3.chidren update
+      const oldCh = oldVnode.children;
+      const newCh = vnode.children;
+      // text
+      if (typeof newCh === "string") {
+        if (typeof oldCh === "string") {
+          if (newCh !== oldCh) {
+            el.textContent = newCh;
+          }
+        } else {
+          // 数组
+          el.textContent = newCh;
+        }
+      } else {
+        if (typeof oldCh === "string") {
+          el.innerHTML = "";
+          newCh.forEach((child) => {
+            el.appendChild(this.createElm(child));
+          });
+        } else {
+          this.updateChildren(el, oldCh, newCh);
         }
       }
-      if (this.isInter(node)) {
-        this.compileText(node);
-      }
-    });
+    }
+    // 保存vnode
+    this._vnode = vnode;
   }
 
-  compileElement(node) {
-    let nodeAttrs = node.attributes;
-    Array.from(nodeAttrs).forEach((attr) => {
-      console.log(attr);
-      const attrName = attr.name;
-      const exp = attr.value;
-      if (this.isDir(attrName)) {
-        const dir = attrName.substring(2);
-        this[dir] && this[dir](node, exp);
+  updateChildren(parentElm, oldCh, newCh) {
+    const len = Math.min(oldCh.length, newCh.length);
+    for (let i = 0; i < len; i++) {
+      this.__patch__(oldCh[i], newCh[i]);
+    }
+    if (newCh.length > oldCh.length) {
+      newCh.slice(len).forEach((child) => {
+        const el = this.createElm(child);
+        parentElm.appendChild(el);
+      });
+    } else if (newCh.length < oldCh.length) {
+      oldCh.slice(len).forEach((child) => {
+        parentElm.removeChild(child.el);
+      });
+    }
+  }
+  // 递归dom创建和追加
+  createElm(vnode) {
+    // 1.创建根组件
+    const el = document.createElement(vnode.tag);
+    // 2.处理attrs
+    if (vnode.props) {
+      for (const key in vnode.props) {
+        const value = vnode.props[key];
+        el.setAttribute(key, value);
       }
-      // 1.实现@click事件
-      if (this.isEvent(attrName)) {
-        // 默认事件是click事件
-        const vmIns = this.$vm;
-        node.addEventListener("click", function() {
-          console.log(exp, vmIns);
-          const fn = vmIns.$options.methods[exp];
-          fn && fn.call(vmIns);
+    }
+    // 3.处理children
+    if (vnode.children) {
+      if (typeof vnode.children === "string") {
+        el.textContent = vnode.children;
+      } else if (Array.isArray(vnode.children)) {
+        vnode.children.forEach((child) => {
+          const childDom = this.createElm(child);
+          el.appendChild(childDom);
         });
       }
-      // 2.实现v-model
-      if (attrName === "k-model") {
-        this.input(node, exp);
+    }
+    // 4.vnode上保存dom元素便于diff
+    vnode.el = el;
 
-        const vmIns = this.$vm;
-        node.addEventListener("input", function(e) {
-          const val = e.target.value;
-          console.log(e);
-          vmIns[exp] = val;
-        });
-      }
-    });
-  }
+    // TODO添加处理自定义组件
 
-  isEvent(attr) {
-    return attr.startsWith("@");
-  }
-
-  text(node, exp) {
-    this.update(node, exp, "text");
-  }
-
-  html(node, exp) {
-    this.update(node, exp, "html");
-  }
-
-  input(node, exp) {
-    this.update(node, exp, "input");
-  }  
-
-  isDir(attr) {
-    return attr.startsWith("k-");
-  }
-
-  isInter(node) {
-    console.log(node.nodeType, node.textContent);
-    return node.nodeType === 3 && /\{\{(.*)\}\}/.test(node.textContent);
-  }
-
-  compileText(node) {
-    console.log("RegExp", RegExp.$1);
-    this.update(node, RegExp.$1, "text");
-  }
-
-  update(node, exp, dir) {
-    // 1.init
-    const fn = this[dir + "Updater"];
-    fn && fn(node, this.$vm[exp]);
-
-    new Watcher(this.$vm, exp, function(val) {
-      fn && fn(node, val);
-    });
-  }
-
-  textUpdater(node, val) {
-    node.textContent = val;
-  }
-
-  htmlUpdater(node, val) {
-    node.innerHTML = val;
-  }
-
-  inputUpdater(node, val) {
-    node.value = val;
+    // 5.return dom
+    return el;
   }
 }
 
 class Watcher {
-  constructor(vm, key, updater) {
+  constructor(vm, fn) {
     this.$vm = vm;
-    this.updater = updater;
-    this.key = key;
+    this.getter = fn;
 
-    // 尝试读取key，触发依赖收集  通过全局Dep.target传送watcher
+    this.get();
+  }
+  get() {
+    // 触发依赖收集
     Dep.target = this;
-    this.$vm[this.key];
+    this.getter.call(this.vm);
     Dep.target = null;
   }
   update() {
-    this.updater.call(this.$vm, this.$vm[this.key]);
+    this.get();
   }
 }
 
 class Dep {
   constructor() {
-    this.deps = [];
+    this.deps = new Set();
   }
   addDep(watcher) {
-    this.deps.push(watcher);
+    this.deps.add(watcher);
   }
   notify() {
     this.deps.forEach((watcher) => watcher.update());
