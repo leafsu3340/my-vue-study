@@ -1,7 +1,5 @@
 <template>
   <div>
-    <span>*</span>
-    <slot></slot>
   </div>
 </template>
 

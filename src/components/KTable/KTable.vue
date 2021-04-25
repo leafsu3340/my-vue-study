@@ -27,13 +27,6 @@ export default {
   },
   computed: {
     columns() {
-      // return this.$slots.default.map(({ data }) => {
-      //   return {
-      //     prop: data.attrs.prop,
-      //     label: data.attrs.label,
-      //     sortable: Object.hasOwnProperty.call(data.attrs, 'sortable')
-      //   };
-      // });
       return this.$slots.default
         .filter(vnode => vnode.tag)
         .map(item => {
